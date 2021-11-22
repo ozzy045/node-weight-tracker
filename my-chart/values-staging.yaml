@@ -1,0 +1,11 @@
+deployment:
+  image: "orzaguricicd.azurecr.io/weightracker"
+  replicas: "3"
+configMap: "config-map"
+secret: "secrets"
+name: weightracker
+service: weightracker-service
+data:
+  HOST_URL: 'http://51.105.164.180:80'
+  PGHOST : 'postgres-staging.postgres.database.azure.com'
+  PGUSERNAME : 'orzaguri@postgres-staging'
