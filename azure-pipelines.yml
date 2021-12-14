@@ -1,0 +1,185 @@
+# Deploy to Azure Kubernetes Service
+# Build and push image to Azure Container Registry; Deploy to Azure Kubernetes Service
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+trigger:
+- master
+- feature/*
+
+
+resources:
+- repo: self
+
+variables:
+
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: '19cbbc55-b6bb-413d-a33e-1d819d1082f6'
+  imageRepository: 'weightracker'
+  containerRegistry: 'orzaguricicd.azurecr.io'
+  dockerfilePath: '**/Dockerfile'
+  tag: '$(Build.BuildId)'
+  imagePullSecret: 'orzaguricicd5876a117-auth'
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: Docker@2
+      displayName: Build and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(imageRepository)
+        dockerfile: $(dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Pipeline.Workspace)/s/manifests'
+        artifact: 'manifests'
+        publishLocation: 'pipeline'
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Pipeline.Workspace)/s/manifests-prod'
+        artifact: 'manifests-prod'
+        publishLocation: 'pipeline'
+
+- stage: DeployToStaging
+  variables:
+  - group: staging
+  displayName: Deploy stage
+  dependsOn: Build
+
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'K8s-staging.default'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              buildType: 'current'
+              artifactName: 'manifests'
+              targetPath: '$(Pipeline.Workspace)/manifests'
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: createSecret
+              secretName: $(imagePullSecret)
+              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
+
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: 'createSecret'
+              secretType: 'generic'
+              secretName: 'secrets'
+              secretArguments: '--from-literal=COOKIE_ENCRYPT_PWD=$(COOKIE_ENCRYPT_PWD)  --from-literal=OKTA_CLIENT_ID=$(OKTA_CLIENT_ID) --from-literal=OKTA_CLIENT_SECRET=$(OKTA_CLIENT_SECRET) --from-literal=PGPASSWORD=$(PGPASSWORD)'
+             
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: 'deploy'
+              manifests: |
+                $(Pipeline.Workspace)/manifests/deployment.yml
+                $(Pipeline.Workspace)/manifests/service.yml
+                $(Pipeline.Workspace)/manifests/ingress.yml
+                $(Pipeline.Workspace)/manifests/config-map.yml
+              containers: '$(containerRegistry)/$(imageRepository):$(tag)'
+              imagePullSecrets: |
+                $(imagePullSecret)
+                'secrets'
+
+          - task: Kubernetes@1
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              command: 'apply'
+              useConfigurationFile: true
+              configuration: '$(Pipeline.Workspace)/manifests/deployment.yml'
+              secretType: 'dockerRegistry'
+              containerRegistryType: 'Azure Container Registry'
+              azureSubscriptionEndpointForSecrets: 'Azure Pass - Sponsorship(ccd0f841-e486-4896-8a31-6ddd232b5e1d)'
+              azureContainerRegistry: 'orzaguricicd.azurecr.io'
+              secretName: 'secrets'
+              configMapName: 'config-map'
+              useConfigMapFile: true
+              configMapFile: '$(Pipeline.Workspace)/manifests/'
+
+- stage: DeployToProduction
+  variables:
+  - group: production
+  displayName: Deploy Prod
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'K8s-production.default'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              buildType: 'current'
+              artifactName: 'manifests-prod'
+              targetPath: '$(Pipeline.Workspace)/manifests-prod'
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: createSecret
+              secretName: $(imagePullSecret)
+              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
+
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: 'createSecret'
+              secretType: 'generic'
+              secretName: 'secrets-prod'
+              secretArguments: '--from-literal=COOKIE_ENCRYPT_PWD=$(COOKIE_ENCRYPT_PWD)  --from-literal=OKTA_CLIENT_ID=$(OKTA_CLIENT_ID) --from-literal=OKTA_CLIENT_SECRET=$(OKTA_CLIENT_SECRET) --from-literal=PGPASSWORD=$(PGPASSWORD)'
+             
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: 'deploy'
+              manifests: |
+                $(Pipeline.Workspace)/manifests-prod/deployment-prod.yml
+                $(Pipeline.Workspace)/manifests-prod/service-prod.yml
+                $(Pipeline.Workspace)/manifests-prod/ingress-prod.yml
+                $(Pipeline.Workspace)/manifests-prod/config-map-prod.yml
+              containers: '$(containerRegistry)/$(imageRepository):$(tag)'
+              imagePullSecrets: |
+                $(imagePullSecret)
+                'secrets-prod'
+
+          - task: Kubernetes@1
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              command: 'apply'
+              useConfigurationFile: true
+              configuration: '$(Pipeline.Workspace)/manifests-prod/deployment-prod.yml'
+              secretType: 'dockerRegistry'
+              containerRegistryType: 'Azure Container Registry'
+              azureSubscriptionEndpointForSecrets: 'Azure Pass - Sponsorship(ccd0f841-e486-4896-8a31-6ddd232b5e1d)'
+              azureContainerRegistry: 'orzaguricicd.azurecr.io'
+              secretName: 'secrets-prod'
+              configMapName: 'config-map-prod'
+              useConfigMapFile: true
+              configMapFile: '$(Pipeline.Workspace)/manifests-prod/'
