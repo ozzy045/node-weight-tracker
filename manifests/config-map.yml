@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap 
+metadata: 
+  creationTimestamp: null
+  name: config-map
+data:
+  HOST : 0.0.0.0
+  PORT: '8080'
+  NODE_ENV: 'development'
+  HOST_URL: 'http://51.105.164.180:80'
+  OKTA_ORG_URL : 'https://dev-40223361.okta.com'
+  PGHOST : 'postgres-staging.postgres.database.azure.com'
+  PGUSERNAME : 'orzaguri@postgres-staging'
+  PGDATABASE : 'postgres'
+  PGPORT : '5432'

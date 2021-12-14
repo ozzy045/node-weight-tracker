@@ -1,0 +1,25 @@
+apiVersion : apps/v1
+kind: Deployment
+metadata:
+  name: weightracker 
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: weightracker
+  template:
+    metadata:
+      labels:
+        app: weightracker 
+    spec:
+      containers:
+        - name: weightracker 
+          image: orzaguricicd.azurecr.io/weightracker
+          imagePullPolicy: "Always"
+          ports:
+          - containerPort: 8080
+          envFrom:
+          - configMapRef:
+             name: config-map
+          - secretRef:
+             name: secrets
